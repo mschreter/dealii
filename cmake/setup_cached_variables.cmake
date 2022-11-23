@@ -395,7 +395,7 @@ OPTION(DEAL_II_WITHOUT_MPIIO
   "If set to ON, MPI-IO is not used."
   OFF
   )
-LIST(APPEND DEAL_II_FEATURES DEAL_II_WITHOUT_MPIIO)
+LIST(APPEND DEAL_II_FEATURES WITHOUT_MPIIO)
 
 ########################################################################
 #                                                                      #
