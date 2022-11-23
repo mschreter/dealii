@@ -52,6 +52,7 @@
 #cmakedefine DEAL_II_LAPACK_WITH_MKL
 #cmakedefine DEAL_II_WITH_METIS
 #cmakedefine DEAL_II_WITH_MPI
+#cmakedefine DEAL_II_WITHOUT_MPIIO
 #cmakedefine DEAL_II_WITH_MUPARSER
 #cmakedefine DEAL_II_WITH_OPENCASCADE
 #cmakedefine DEAL_II_WITH_P4EST

@@ -391,6 +391,11 @@ SET(DEAL_II_CPACK_BUNDLE_NAME "${DEAL_II_PACKAGE_NAME}" CACHE STRING
   )
 MARK_AS_ADVANCED(DEAL_II_CPACK_BUNDLE_NAME)
 
+OPTION(DEAL_II_WITHOUT_MPIIO
+  "If set to ON, MPI-IO is not used."
+  OFF
+  )
+LIST(APPEND DEAL_II_FEATURES DEAL_II_WITHOUT_MPIIO)
 
 ########################################################################
 #                                                                      #

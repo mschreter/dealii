@@ -1398,11 +1398,75 @@ namespace parallel
     const unsigned int global_num_cells,
     const std::string &filename) const
   {
-#ifdef DEAL_II_WITH_MPI
+#if defined(DEAL_II_WITHOUT_MPIIO)
+    (void)global_first_cell;
+    (void)global_num_cells;
+
+    Assert(sizes_fixed_cumulative.size() > 0,
+           ExcMessage("No data has been packed!"));
+
+    const int myrank = Utilities::MPI::this_mpi_process(mpi_communicator);
+
+    //
+    // ---------- Fixed size data ----------
+    //
+    {
+      std::ofstream ss_out(std::string(filename) + "_fixed.data");
+
+      // ------------------
+
+      // Write cumulative sizes to file.
+      // Since each processor owns the same information about the data
+      // sizes, it is sufficient to let only the first processor perform
+      // this task.
+
+      // Write packed data to file .
+      {
+        const auto temp =
+          Utilities::MPI::gather(mpi_communicator, src_data_fixed, 0);
+
+        if (myrank == 0)
+          {
+            boost::archive::binary_oarchive oa(ss_out);
+            oa << sizes_fixed_cumulative;
+            oa << temp;
+          }
+      }
+    }
+
+    //
+    // ---------- Variable size data ----------
+    //
+    if (variable_size_data_stored)
+      {
+        std::ofstream ss_out(std::string(filename) + "_variable.data");
+
+        // Write sizes of each cell into file from process 0.
+        {
+          const std::vector<std::vector<int>> sizes =
+            Utilities::MPI::gather(mpi_communicator, src_sizes_variable, 0);
+          const std::vector<std::vector<char>> data =
+            Utilities::MPI::gather(mpi_communicator, src_data_variable, 0);
+
+          if (myrank == 0)
+            {
+              boost::archive::binary_oarchive oa(ss_out);
+              oa << sizes;
+              oa << data;
+            }
+
+          // It is very unlikely that a single process has more than
+          // 2 billion cells, but we might as well check.
+          AssertThrow(src_sizes_variable.size() <
+                        static_cast<std::size_t>(
+                          std::numeric_limits<int>::max()),
+                      ExcNotImplemented());
+        }
+      }
+#elif defined(DEAL_II_WITH_MPI)
     // Large fractions of this function have been copied from
     // DataOutInterface::write_vtu_in_parallel.
     // TODO: Write general MPIIO interface.
-
     Assert(sizes_fixed_cumulative.size() > 0,
            ExcMessage("No data has been packed!"));
 
@@ -1417,7 +1481,7 @@ namespace parallel
       const std::string fname_fixed = std::string(filename) + "_fixed.data";
 
       MPI_Info info;
-      int      ierr = MPI_Info_create(&info);
+      int ierr = MPI_Info_create(&info);
       AssertThrowMPI(ierr);
 
       MPI_File fh;
@@ -1488,7 +1552,7 @@ namespace parallel
           std::string(filename) + "_variable.data";
 
         MPI_Info info;
-        int      ierr = MPI_Info_create(&info);
+        int ierr = MPI_Info_create(&info);
         AssertThrowMPI(ierr);
 
         MPI_File fh;
@@ -1534,8 +1598,8 @@ namespace parallel
         // processor and compute the prefix sum. We do this in 64 bit
         // to avoid overflow for files larger than 4GB:
         const std::uint64_t size_on_proc = src_data_variable.size();
-        std::uint64_t       prefix_sum   = 0;
-        ierr                             = MPI_Exscan(&size_on_proc,
+        std::uint64_t prefix_sum = 0;
+        ierr = MPI_Exscan(&size_on_proc,
                           &prefix_sum,
                           1,
                           MPI_UINT64_T,
@@ -1582,7 +1646,92 @@ namespace parallel
     const unsigned int n_attached_deserialize_fixed,
     const unsigned int n_attached_deserialize_variable)
   {
-#ifdef DEAL_II_WITH_MPI
+#if defined(DEAL_II_WITHOUT_MPIIO)
+    (void)global_first_cell;
+    (void)global_num_cells;
+
+    Assert(dest_data_fixed.size() == 0,
+           ExcMessage("Previously loaded data has not been released yet!"));
+
+    variable_size_data_stored = (n_attached_deserialize_variable > 0);
+
+    const int myrank = Utilities::MPI::this_mpi_process(mpi_communicator);
+
+    //
+    // ---------- Fixed size data ----------
+    //
+    {
+      std::ifstream ss_in(std::string(filename) + "_fixed.data");
+
+      // Read cumulative sizes from file.
+      // Since all processors need the same information about the data
+      // sizes, let each of them retrieve it by reading from the same
+      // location in the file.
+      sizes_fixed_cumulative.resize(1 + n_attached_deserialize_fixed +
+                                    (variable_size_data_stored ? 1 : 0));
+
+
+      //// Allocate sufficient memory.
+      const unsigned int bytes_per_cell = sizes_fixed_cumulative.back();
+      dest_data_fixed.resize(static_cast<size_t>(local_num_cells) *
+                             bytes_per_cell);
+
+      {
+        std::vector<std::vector<char>> temp;
+        std::vector<unsigned int>      sizes;
+
+        if (myrank == 0)
+          {
+            boost::archive::binary_iarchive ia(ss_in);
+            ia >> sizes;
+            ia >> temp;
+          }
+
+        // send to all processes
+        sizes_fixed_cumulative =
+          Utilities::MPI::broadcast(mpi_communicator, sizes, 0);
+
+        dest_data_fixed = Utilities::MPI::scatter(mpi_communicator, temp, 0);
+      }
+    }
+
+    //
+    // ---------- Variable size data ----------
+    //
+    if (variable_size_data_stored)
+      {
+        std::ifstream ss_in(std::string(filename) + "_variable.data");
+
+        // Read sizes of all locally owned cells.
+        dest_sizes_variable.resize(local_num_cells);
+        // Compute my data size in bytes and compute prefix sum. We do this
+        // in 64 bit to avoid overflow for files larger than 4 GB:
+        const std::uint64_t size_on_proc =
+          std::accumulate(dest_sizes_variable.begin(),
+                          dest_sizes_variable.end(),
+                          0ULL);
+        dest_data_variable.resize(size_on_proc);
+
+        // Write sizes of each cell into file from process 0.
+        std::vector<std::vector<int>>  sizes;
+        std::vector<std::vector<char>> data;
+
+        if (myrank == 0)
+          {
+            boost::archive::binary_iarchive ia(ss_in);
+            ia >> sizes;
+            ia >> data;
+
+            // scatter
+            dest_sizes_variable = sizes[0];
+            dest_data_variable  = data[0];
+          }
+
+        dest_sizes_variable =
+          Utilities::MPI::scatter(mpi_communicator, sizes, 0);
+        dest_data_variable = Utilities::MPI::scatter(mpi_communicator, data, 0);
+      }
+#elif defined(DEAL_II_WITH_MPI)
     // Large fractions of this function have been copied from
     // DataOutInterface::write_vtu_in_parallel.
     // TODO: Write general MPIIO interface.
@@ -1599,7 +1748,7 @@ namespace parallel
       const std::string fname_fixed = std::string(filename) + "_fixed.data";
 
       MPI_Info info;
-      int      ierr = MPI_Info_create(&info);
+      int ierr = MPI_Info_create(&info);
       AssertThrowMPI(ierr);
 
       MPI_File fh;
@@ -1662,7 +1811,7 @@ namespace parallel
           std::string(filename) + "_variable.data";
 
         MPI_Info info;
-        int      ierr = MPI_Info_create(&info);
+        int ierr = MPI_Info_create(&info);
         AssertThrowMPI(ierr);
 
         MPI_File fh;
@@ -1697,7 +1846,7 @@ namespace parallel
                           0ULL);
 
         std::uint64_t prefix_sum = 0;
-        ierr                     = MPI_Exscan(&size_on_proc,
+        ierr = MPI_Exscan(&size_on_proc,
                           &prefix_sum,
                           1,
                           MPI_UINT64_T,

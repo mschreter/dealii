@@ -8278,12 +8278,51 @@ DataOutInterface<dim, spacedim>::write_vtu_in_parallel(
   std::ofstream f(filename);
   AssertThrow(f, ExcFileNotOpen(filename));
   write_vtu(f);
-#else
-
+#elif defined(DEAL_II_WITHOUT_MPIIO)
   const unsigned int myrank = Utilities::MPI::this_mpi_process(comm);
+
+  std::ofstream ss_out(filename);
+
+  // header
+  if (myrank == 0)
+    {
+      std::stringstream ss;
+      DataOutBase::write_vtu_header(ss, vtk_flags);
+      ss_out << ss.rdbuf();
+    }
+
+  // main
+  const auto &patches = this->get_patches();
+  const types::global_dof_index my_n_patches = patches.size();
+  const types::global_dof_index global_n_patches =
+    Utilities::MPI::sum(my_n_patches, comm);
+
+  std::stringstream ss;
+  if (my_n_patches > 0 || (global_n_patches == 0 && myrank == 0))
+    DataOutBase::write_vtu_main(patches,
+                                this->get_dataset_names(),
+                                this->get_nonscalar_data_ranges(),
+                                vtk_flags,
+                                ss);
+
+  const auto temp = Utilities::MPI::gather(comm, ss.str(), 0);
+
+  if (myrank == 0)
+    for (const auto &i : temp)
+      ss_out << i;
+
+  // footer
+  if (myrank == 0)
+    {
+      std::stringstream ss;
+      DataOutBase::write_vtu_footer(ss);
+      ss_out << ss.rdbuf();
+    }
+#else
+  const unsigned int myrank  = Utilities::MPI::this_mpi_process(comm);
   const unsigned int n_ranks = Utilities::MPI::n_mpi_processes(comm);
-  MPI_Info info;
-  int ierr = MPI_Info_create(&info);
+  MPI_Info           info;
+  int                ierr = MPI_Info_create(&info);
   AssertThrowMPI(ierr);
   MPI_File fh;
   ierr = MPI_File_open(
@@ -8300,7 +8339,7 @@ DataOutInterface<dim, spacedim>::write_vtu_in_parallel(
   AssertThrowMPI(ierr);
 
   // Define header size so we can broadcast later.
-  unsigned int header_size;
+  unsigned int  header_size;
   std::uint64_t footer_offset;
 
   // write header
@@ -8319,7 +8358,7 @@ DataOutInterface<dim, spacedim>::write_vtu_in_parallel(
   AssertThrowMPI(ierr);
 
   {
-    const auto &patches = get_patches();
+    const auto &                  patches      = get_patches();
     const types::global_dof_index my_n_patches = patches.size();
     const types::global_dof_index global_n_patches =
       Utilities::MPI::sum(my_n_patches, comm);
@@ -8338,7 +8377,7 @@ DataOutInterface<dim, spacedim>::write_vtu_in_parallel(
 
     // Use prefix sum to find specific offset to write at.
     const std::uint64_t size_on_proc = ss.str().size();
-    std::uint64_t prefix_sum = 0;
+    std::uint64_t       prefix_sum   = 0;
     ierr =
       MPI_Exscan(&size_on_proc, &prefix_sum, 1, MPI_UINT64_T, MPI_SUM, comm);
     AssertThrowMPI(ierr);
