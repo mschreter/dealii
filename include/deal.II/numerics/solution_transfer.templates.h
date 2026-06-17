@@ -372,8 +372,11 @@ SolutionTransfer<dim, VectorType, spacedim>::pack_callback(
           case CellStatus::cell_will_persist:
           case CellStatus::cell_will_be_refined:
             {
-              fe_index = cell->future_fe_index();
-              break;
+              if (cell->is_locally_owned())
+      fe_index = cell->future_fe_index();
+    else
+      fe_index = cell->active_fe_index();;
+    break;
             }
 
           case CellStatus::children_will_be_coarsened:
@@ -440,6 +443,9 @@ SolutionTransfer<dim, VectorType, spacedim>::unpack_callback(
           case CellStatus::cell_will_persist:
           case CellStatus::children_will_be_coarsened:
             {
+              if (!cell->is_locally_owned())
+                return;
+
               fe_index = cell->active_fe_index();
               break;
             }

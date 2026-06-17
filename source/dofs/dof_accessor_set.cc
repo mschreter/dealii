@@ -185,6 +185,9 @@ namespace internal
 
     if (cell.is_active() && !cell.is_artificial())
       {
+    if (!cell.is_locally_owned())
+      return;
+
         if ((cell.get_dof_handler().has_hp_capabilities() == false) ||
             // for hp-DoFHandlers, we need to require that on
             // active cells, you either don't specify an fe_index,
